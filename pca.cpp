@@ -1,5 +1,7 @@
 #include "stb_image.h"
+#include <cstddef>
 #include <cstdint>
+#include <eigen3/Eigen/Core>
 #include <eigen3/Eigen/Dense>
 #include <filesystem>
 #include <iostream>
@@ -7,53 +9,60 @@
 #include <raylib.h>
 #include <sys/types.h>
 
-using Matrix = Eigen::MatrixXd;
+using M = Eigen::MatrixXd;
+using V = Eigen::VectorXf;
 
-auto load_images(std::string_view directory_path) -> std::optional<Matrix> {
+auto load_image(std::string_view file) -> std::optional<V> {
 
-	std::vector<std::unique_ptr<uint8_t>> images;
-	int expect_w = 0, expect_h = 0;
+  int w, h, c;
+  unsigned char *data = stbi_load(file.data(), &w, &h, &c, 1);
+  if (data == nullptr) {
+    std::cerr << "Failed to load image: " << file << "\n";
+    return {};
+  }
 
-	for (const auto &entry :
-	   std::filesystem::directory_iterator(directory_path)) {
-		if (!entry.is_regular_file())
-			continue;
+  V vec(w * h);
 
-		auto path = entry.path().string();
-
-		// Attempt to load the image
-		int w, h, c;
-		unsigned char *data = stbi_load(path.c_str(), &w, &h, &c, 1);
-		if (data == nullptr) {
-			std::cerr << "Failed to load image: " << path << "\n";
-			continue;
-		}
-		if (expect_h < 0 || expect_w < 0) {
-			expect_h = h;
-			expect_w = w;
-		} else if (expect_h != h || expect_w != w)
-			return {};
-
-		images.emplace_back(data);
-    }
-
-    Matrix res(images.size(), expect_h * expect_w);
-    for (auto [i, d] : std::views::enumerate(images)) {
-		res()
-		
-    }
-	
-	return true;
+  for (auto i = 0; i < w * h; i++) {
+    vec(i) = data[i];
+  }
+  stbi_image_free(data);
+  return vec;
 }
+auto load_images(std::string_view directory_path) -> std::optional<M> {
 
-auto train()
+  std::vector<V> images;
+
+  for (auto f : std::filesystem::directory_iterator(directory_path)) {
+    if (!f.is_regular_file())
+      continue;
+    if (auto res = load_image(f.path().string()))
+      images.push_back(*res);
+  }
+
+  M res(images.size(), images[0].size());
+
+  for (auto [r, row] : std::views::enumerate(images))
+    res.col(r) = row;
+
+  return res;
+}
+auto train(const M &&imgs, auto &pcs, auto &svals, float acc) {
+	auto svd = imgs.bdcSvd(Eigen::ComputeThinV);
+	pcs = svd.matrixV();
+	if (acc >= 1)
+		svals = svd.singularValues();
+	else {
+		auto normalized = svd.singularValues() / svd.singularValues().sum();
+		float total = 0;
+		int k = 0;
+		while (total < acc)
+			total += normalized(k++);
+		svals = svd.singularValues()(Eigen::seq(0, k));
+	}
+}
 
 
 auto main() -> int {
-  Matrix m(2, 2);
-  m(0, 0) = 3;
-  m(1, 0) = 2.5;
-  m(0, 1) = -1;
-  m(1, 1) = m(1, 0) + m(0, 1);
-  std::cout << m << std::endl;
+	auto data_set = load_images("train")
 }
