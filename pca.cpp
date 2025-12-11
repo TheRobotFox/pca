@@ -80,8 +80,6 @@ auto train(Ref<const M> imgs, M &Q, V &svals, V &mean, float acc) {
 	}
 }
 
-#define SCREEN_W 1200
-#define SCREEN_H 800
 #define MULT 150
 auto main(int argc, char **argv) -> int {
 	M data_set;
@@ -104,7 +102,9 @@ auto main(int argc, char **argv) -> int {
 
 	auto sliders = projected.rows();
 
-	InitWindow(SCREEN_W, SCREEN_H, "PCA Test");
+	SetConfigFlags(FLAG_WINDOW_RESIZABLE);
+	InitWindow(800, 600, "PCA Test");
+	
 	SetTargetFPS(24);
 
 	uint8_t *data = new uint8_t[w * h];
@@ -126,6 +126,10 @@ auto main(int argc, char **argv) -> int {
 
 	while (!WindowShouldClose()) {
 		Vector2 pos = GetMousePosition();
+		int screen_w = GetScreenWidth();
+		int screen_h = GetScreenHeight();
+		int slider_height = (screen_h / sliders);
+		
 
 		if (IsKeyPressed(KEY_N)) {
 			selected_img++;
@@ -160,10 +164,10 @@ auto main(int argc, char **argv) -> int {
 		if (IsMouseButtonUp(MOUSE_BUTTON_LEFT)) gripped = {};
 
 		if (gripped) {
-			projected(*gripped) = (pos.x / SCREEN_W - .5) * MULT;
+			projected(*gripped) = (pos.x / screen_w - .5) * MULT;
 			redraw              = true;
 		} else if (IsMouseButtonDown(MOUSE_LEFT_BUTTON)) {
-			auto slider = (int)pos.y * sliders / SCREEN_H;
+			auto slider = (int)((pos.y) / slider_height);
 			if (slider >= sliders) continue;
 			gripped = slider;
 		}
@@ -180,17 +184,19 @@ auto main(int argc, char **argv) -> int {
 		ClearBackground(BLACK);
 
 		for (int i = 0; i < sliders; i++) {
-			int y     = i * (SCREEN_H / sliders);
-			int width = projected(i) * SCREEN_W / MULT;
+			int y = i * slider_height;
+			int width = projected(i) * screen_w / MULT;
 			if (width > 0)
-				DrawRectangle(SCREEN_W / 2, y, width, 10,
+				DrawRectangle(screen_w / 2, y+slider_height/10, width, slider_height*0.8F,
 				              GREEN);
 			else
-				DrawRectangle(SCREEN_W / 2 + width, y, -width,
-				              10, GRAY);
+				DrawRectangle(screen_w / 2 + width, y+slider_height/10, -width, slider_height*0.8F,
+				              GRAY);
 		}
-		DrawTextureEx(tex, {200, 0}, 0, (float)SCREEN_H / h,
-		              {255, 255, 255, 150});
+		float x_offset = screen_w/2 - (w/2)*(screen_h / h);
+		DrawTextureEx(tex, {x_offset, 0}, 0,
+		              (float)screen_h / h,
+		              {255, 255, 255, 200});
 
 		EndDrawing();
 	}
