@@ -168,8 +168,7 @@ auto main(int argc, char **argv) -> int {
 			redraw              = true;
 		} else if (IsMouseButtonDown(MOUSE_LEFT_BUTTON)) {
 			auto slider = (int)((pos.y) / slider_height);
-			if (slider >= sliders) continue;
-			gripped = slider;
+			if (slider < sliders) gripped = slider;
 		}
 
 		if (redraw) {
