@@ -1,7 +1,8 @@
+#include <cstdlib>
+#define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 #include <cstddef>
 #include <cstdint>
-#include <eigen3/Eigen/Core>
 #include <eigen3/Eigen/Dense>
 #include <filesystem>
 #include <iostream>
@@ -9,60 +10,188 @@
 #include <raylib.h>
 #include <sys/types.h>
 
-using M = Eigen::MatrixXd;
+
+using M = Eigen::MatrixXf;
 using V = Eigen::VectorXf;
+using Eigen::Ref;
 
+auto load_image(std::string_view file, int &w, int &h) -> std::optional<V> {
+
+	int c;
+	unsigned char *data = stbi_load(file.data(), &w, &h, &c, 1);
+	if (data == nullptr) {
+		std::cerr << "Failed to load image: " << file << "\n";
+		return {};
+	}
+
+	V vec(w * h);
+
+	for (auto i = 0; i < w * h; i++) {
+		vec(i) = data[i] / 255.0F;
+	}
+	stbi_image_free(data);
+	return vec;
+}
 auto load_image(std::string_view file) -> std::optional<V> {
-
-  int w, h, c;
-  unsigned char *data = stbi_load(file.data(), &w, &h, &c, 1);
-  if (data == nullptr) {
-    std::cerr << "Failed to load image: " << file << "\n";
-    return {};
-  }
-
-  V vec(w * h);
-
-  for (auto i = 0; i < w * h; i++) {
-    vec(i) = data[i];
-  }
-  stbi_image_free(data);
-  return vec;
+	int w, h;
+	return load_image(file, w, h);
 }
-auto load_images(std::string_view directory_path) -> std::optional<M> {
+auto load_images(std::string_view directory_path, int &w, int &h)
+    -> std::optional<M> {
 
-  std::vector<V> images;
+	std::vector<V> images;
 
-  for (auto f : std::filesystem::directory_iterator(directory_path)) {
-    if (!f.is_regular_file())
-      continue;
-    if (auto res = load_image(f.path().string()))
-      images.push_back(*res);
-  }
+	for (auto f : std::filesystem::recursive_directory_iterator(directory_path)) {
+		if (!f.is_regular_file()) continue;
+		if (auto res = load_image(f.path().string(), w, h))
+			images.push_back(*res);
+	}
 
-  M res(images.size(), images[0].size());
+	M res(images.size(), images[0].size());
 
-  for (auto [r, row] : std::views::enumerate(images))
-    res.col(r) = row;
+	for (auto [r, row] : std::views::enumerate(images)) {
+		res.row(r) = row;
+	}
 
-  return res;
+	return res;
 }
-auto train(const M &&imgs, auto &pcs, auto &svals, float acc) {
-	auto svd = imgs.bdcSvd(Eigen::ComputeThinV);
-	pcs = svd.matrixV();
-	if (acc >= 1)
-		svals = svd.singularValues();
-	else {
-		auto normalized = svd.singularValues() / svd.singularValues().sum();
-		float total = 0;
-		int k = 0;
-		while (total < acc)
+auto train(Ref<const M> imgs, M &Q, V &svals, V &mean, float acc) {
+	// normalize
+	mean = imgs.colwise().mean();
+
+	auto svd         = imgs.bdcSvd<Eigen::ComputeThinV>();
+	const auto &S    = svd.singularValues();
+	const auto &Vmat = svd.matrixV();
+	if (acc >= 1.0f) {
+		svals = S;
+		Q     = Vmat;
+	} else {
+		Eigen::VectorXf normalized = S / S.sum();
+		float total                = 0;
+		int k                      = 0;
+
+		while (k < normalized.size() && total < acc)
 			total += normalized(k++);
-		svals = svd.singularValues()(Eigen::seq(0, k));
+		svals = S.head(k);
+		Q     = Vmat.leftCols(k);
 	}
 }
 
+#define SCREEN_W 1800
+#define SCREEN_H 1200
+#define MULT 40
+auto main(int argc, char **argv) -> int {
+	M data_set;
 
-auto main() -> int {
-	auto data_set = load_images("train")
+	int w, h;
+	float acc = strtof(argv[2], NULL);
+	if (auto res = load_images(argv[1], w, h))
+		data_set = *res;
+	else
+		return -1;
+
+	M Q;
+	V mean, S;
+	train(data_set, Q, S, mean, acc);
+	M QT = Q.transpose();
+
+
+	int selected_img = 0;
+	V projected      = QT * (data_set.row(selected_img).transpose() - mean);
+	V reconstruct;
+
+	auto sliders = projected.rows();
+
+	InitWindow(SCREEN_W, SCREEN_H, "PCA Test");
+	SetTargetFPS(24);
+
+	uint8_t *data = new uint8_t[w * h];
+
+	Image screenImage = {.data    = data,
+	                     .width   = w,
+	                     .height  = h,
+	                     .mipmaps = 1,
+	                     .format  = PIXELFORMAT_UNCOMPRESSED_GRAYSCALE};
+
+	Texture tex = LoadTextureFromImage(screenImage);
+
+	std::optional<int> gripped;
+	bool redraw = true;
+
+	std::optional<float> target_time;
+	V target;
+	V current = projected;
+
+	while (!WindowShouldClose()) {
+		Vector2 pos = GetMousePosition();
+
+		if (IsKeyPressed(KEY_N)) {
+			selected_img++;
+			if (selected_img >= data_set.rows()) selected_img = 0;
+			target  = QT * (data_set.row(selected_img).transpose() -
+			                mean);
+			current = projected;
+
+			target_time = 0;
+		} else if (IsKeyPressed(KEY_P)) {
+			selected_img--;
+			if (selected_img < 0)
+				selected_img = data_set.rows() - 1;
+			target  = QT * (data_set.row(selected_img).transpose() -
+			                mean);
+			current = projected;
+			target_time = 0;
+		}
+
+		if (target_time) {
+			if (target_time >= 1) {
+				projected   = target;
+				target_time = {};
+			} else {
+				projected = current * (1 - *target_time) +
+				            target * *target_time;
+				target_time = *target_time + 0.1;
+			}
+			redraw = true;
+		}
+
+
+		if (IsMouseButtonUp(MOUSE_BUTTON_LEFT)) gripped = {};
+
+		if (gripped) {
+			projected(*gripped) = (pos.x / SCREEN_W - .5) * MULT;
+			redraw              = true;
+		} else if (IsMouseButtonDown(MOUSE_LEFT_BUTTON)) {
+			auto slider = (int)pos.y * sliders / SCREEN_H;
+			if (slider >= sliders) continue;
+			gripped = slider;
+		}
+
+
+		if (redraw) {
+			redraw      = false;
+			reconstruct = (Q * projected) + mean;
+			for (int i = 0; i < w * h; i++)
+				data[i] = reconstruct(i) * 255;
+			UpdateTexture(tex, data);
+		}
+
+		BeginDrawing();
+		ClearBackground(BLACK);
+
+		for (int i = 0; i < sliders; i++) {
+			int y     = i * (SCREEN_H / sliders);
+			int width = projected(i) * SCREEN_W / MULT;
+			if (width > 0)
+				DrawRectangle(SCREEN_W / 2, y, width, 10,
+				              GREEN);
+			else
+				DrawRectangle(SCREEN_W / 2 + width, y, -width,
+				              10, GRAY);
+		}
+		DrawTextureEx(tex, {200, 0}, 0, (float)SCREEN_H / h,
+		              {255, 255, 255, 150});
+
+		EndDrawing();
+	}
 }
