@@ -10,7 +10,6 @@
 #include <raylib.h>
 #include <sys/types.h>
 
-
 using M = Eigen::MatrixXf;
 using V = Eigen::VectorXf;
 using Eigen::Ref;
@@ -41,7 +40,8 @@ auto load_images(std::string_view directory_path, int &w, int &h)
 
 	std::vector<V> images;
 
-	for (auto f : std::filesystem::recursive_directory_iterator(directory_path)) {
+	for (auto f :
+	     std::filesystem::recursive_directory_iterator(directory_path)) {
 		if (!f.is_regular_file()) continue;
 		if (auto res = load_image(f.path().string(), w, h))
 			images.push_back(*res);
@@ -62,10 +62,10 @@ auto train(Ref<const M> imgs, M &Q, V &svals, V &mean, float acc) {
 	auto svd         = imgs.bdcSvd<Eigen::ComputeThinV>();
 	const auto &S    = svd.singularValues();
 	const auto &Vmat = svd.matrixV();
-	if (acc >= 1.0f) {
+	if (acc == 1.0f) {
 		svals = S;
 		Q     = Vmat;
-	} else {
+	} else if (acc < 1.0f) {
 		Eigen::VectorXf normalized = S / S.sum();
 		float total                = 0;
 		int k                      = 0;
@@ -74,12 +74,15 @@ auto train(Ref<const M> imgs, M &Q, V &svals, V &mean, float acc) {
 			total += normalized(k++);
 		svals = S.head(k);
 		Q     = Vmat.leftCols(k);
+	} else {
+		svals = S.head((int)acc);
+		Q     = Vmat.leftCols((int)acc);
 	}
 }
 
-#define SCREEN_W 1800
-#define SCREEN_H 1200
-#define MULT 40
+#define SCREEN_W 1200
+#define SCREEN_H 800
+#define MULT 150
 auto main(int argc, char **argv) -> int {
 	M data_set;
 
@@ -94,7 +97,6 @@ auto main(int argc, char **argv) -> int {
 	V mean, S;
 	train(data_set, Q, S, mean, acc);
 	M QT = Q.transpose();
-
 
 	int selected_img = 0;
 	V projected      = QT * (data_set.row(selected_img).transpose() - mean);
@@ -155,7 +157,6 @@ auto main(int argc, char **argv) -> int {
 			redraw = true;
 		}
 
-
 		if (IsMouseButtonUp(MOUSE_BUTTON_LEFT)) gripped = {};
 
 		if (gripped) {
@@ -166,7 +167,6 @@ auto main(int argc, char **argv) -> int {
 			if (slider >= sliders) continue;
 			gripped = slider;
 		}
-
 
 		if (redraw) {
 			redraw      = false;
